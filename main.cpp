@@ -191,8 +191,9 @@ GEN encrypt(GEN input, params* param, keyset* key){
     GEN h = key->pk;
     
     GEN two = stoi(2);
-    GEN temp, m, s, e, c;
+    GEN temp, m, s, e, c, qbyt;
     
+    qbyt = gfloor(gdiv(q, t));
     temp = cgetg(itos(n) + 1, t_VEC);
     temp = encodeinputvector(n, t, input);
     m = gtopolyrev(temp, -1);
@@ -210,10 +211,126 @@ GEN encrypt(GEN input, params* param, keyset* key){
     
     temp = gmul(h, s);
     c = gadd(e, temp);
+    
+    m = gtovecrev(lift(lift(m)));
+    for(int i=1; i<=lg(m)-1; i++){
+        gel(m, i) = gmul(qbyt, gel(m, i));
+    }
+    m = gtopolyrev(m, -1);
+    m = gmodulo(m, q);
+    m = gmodulo(m, modulus);
+    c = gadd(c, m);
+    
+    // Mapping the ciphertext to the symmetric interval of (-q/2, q/2]
+    
+    c = gtovecrev(lift(lift(c)));
+    for(int i=1; i<=itos(n); i++){
+        if(gcmp(gmul(two,gel(c, i)),q)==1){
+            gel(c, i) = gsub(gel(c,i), q);
+        }
+    }
+    c = gtopolyrev(c, -1);
+    c = gmodulo(c, modulus);
+    
     return c;
     
 }
 
+// This decrypt function should be called when ciphertext is added homomorphically or it is a simple ciphertext
+GEN decryptSimple(GEN input, params* param, keyset* key){
+    
+    GEN n = param->n;
+    GEN q = param->q;
+    GEN t = param->t;
+    GEN modulus = param->modulus;
+    GEN h = key->pk;
+    GEN f = key->sk;
+    GEN two = stoi(2);
+    
+    GEN temp, temp1;
+    
+    temp = lift(lift(gmul(f, input)));
+    temp = gtovecrev(temp);
+    for(int i=1; i<=itos(n); i++){
+        while(gcmp(gmul(two,gel(temp, i)),q)==1){
+            gel(temp, i) = gsub(gel(temp, i), q);
+        }
+    }
+    
+    for(int i=1; i<=itos(n); i++){
+        gel(temp, i) = diviiround(gmul(gel(temp, i), t), q);
+    }
+    temp = lift(gmodulo(temp, t));
+    temp1 = gtopolyrev(temp, -1);
+    temp1 = gmodulo(temp1, modulus);
+    temp = lift(temp1);
+    temp = gtovecrev(temp);
+    GEN result = stoi(0);
+    for(int i=0; i<lg(temp)-1; i++){
+        result = gadd(gel(temp, i+1), result);
+    }
+    
+    cout<<"Simple decryption result "<<GENtostr(result)<<endl;
+    
+    return temp;
+    
+}
+
+// This function should be used when the ciphertext has been operated using homomorphic multiplication.
+GEN decryptOneMul(GEN input, params* param, keyset* key){
+    
+    GEN n = param->n;
+    GEN q = param->q;
+    GEN t = param->t;
+    GEN modulus = param->modulus;
+    GEN h = key->pk;
+    GEN f = key->sk;
+    GEN two = stoi(2);
+    
+    GEN temp, temp1, temp2;
+    
+    temp2 = f;
+    temp2 = gmul(f, temp2);
+    temp2 = lift(lift(temp2));
+    temp2 = gmodulo(temp2, modulus);
+    temp = lift(gmul(temp2, input));
+    temp = lift(gmodulo(temp, q));
+    temp = gtovecrev(temp);
+    
+    for(int i=1; i<=itos(n); i++){
+        while(gcmp(gmul(two,gel(temp, i)),q)==1){
+            gel(temp, i) = gsub(gel(temp, i), q);
+        }
+    }
+    
+    for(int i=1; i<=itos(n); i++){
+        gel(temp, i) = diviiround(gmul(gel(temp, i), t), q);
+    }
+    temp = lift(gmodulo(temp, t));
+    temp1 = gtopolyrev(temp, -1);
+    temp1 = gmodulo(temp1, modulus);
+    temp = lift(temp1);
+    temp = gtovecrev(temp);
+    GEN result = stoi(0);
+    for(int i=0; i<lg(temp)-1; i++){
+        result = gadd(gel(temp, i+1), result);
+    }
+    
+    cout<<"Decryption result "<<GENtostr(result)<<endl;
+    
+    return temp;
+    
+}
+
+// This function is used to homomorphically add 2 ciphertexts.
+GEN homAdd(GEN input1, GEN input2){
+    return gadd(input1, input2);
+}
+
+// This function is used to homomorphically multiply 2 ciphertexts. Currently, this function can only support one depth multiplications.
+GEN homMul(GEN input1, GEN input2){
+    return gmul(input1, input2);
+}
 
 
 
@@ -330,8 +447,10 @@ void homomorphicMul(GEN n, GEN q, GEN t, long long int input1, long long int inp
     if(detailedverbose)
         cout<<"Ciphertext1: "<<GENtostr(c)<<endl;
     c = gtopolyrev(c, -1);
+    
     c = gmodulo(c, modulus);
     c1 = gtopolyrev(c1, -1);
+    
     c1 = gmodulo(c1, modulus);
     cout<<"Ciphertexts coefficients mapped around q symmeterically.\n";
     
@@ -359,7 +478,7 @@ void homomorphicMul(GEN n, GEN q, GEN t, long long int input1, long long int inp
     temp1 = lift(gmodulo(temp1, q));
     temp1 = gtovecrev(temp1);
     for(int i=1; i<=itos(n); i++){
-        if(gcmp(gmul(two,gel(temp1, i)),q)==1){
+        while(gcmp(gmul(two,gel(temp1, i)),q)==1){
             gel(temp1, i) = gsub(gel(temp1,i), q);
         }
     }
@@ -531,8 +650,10 @@ void homomorphicAdd(GEN n, GEN q, GEN t, long long int input1, long long int inp
     if(detailedverbose)
         cout<<"Ciphertext1: "<<GENtostr(c)<<endl;
     c = gtopolyrev(c, -1);
+    
     c = gmodulo(c, modulus);
     c1 = gtopolyrev(c1, -1);
+    
     c1 = gmodulo(c1, modulus);
     
     cout<<"Ciphertexts coefficients mapped around q symmeterically.\n";
@@ -542,7 +663,7 @@ void homomorphicAdd(GEN n, GEN q, GEN t, long long int input1, long long int inp
     temp1 = lift(lift(gmul(f, c)));
     temp1 = gtovecrev(temp1);
     for(int i=1; i<=itos(n); i++){
-        if(gcmp(gmul(two,gel(temp1, i)),q)==1){
+        while(gcmp(gmul(two,gel(temp1, i)),q)==1){
             gel(temp1, i) = gsub(gel(temp1,i), q);
         }
     }
